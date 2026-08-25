@@ -1,0 +1,133 @@
+cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
+
+set(CMAKE_POLICY_DEFAULT_CMP0141 NEW CACHE STRING "" FORCE)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.11" CACHE STRING "" FORCE)
+set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "" FORCE)
+
+project(Project_Name VERSION 1.0.0)
+
+if(PROJECT_IS_TOP_LEVEL)
+    if(NOT CMAKE_CXX_STANDARD)
+        set(CMAKE_CXX_STANDARD 23)
+    endif()
+
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT
+            "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>"
+            CACHE STRING "" FORCE
+    )
+endif()
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-Wno-deprecated-builtins)
+endif()
+
+set(LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libs)
+
+include(cmake/cpm.cmake)
+
+# 1. Download and integrate JUCE
+cpmaddpackage(
+        NAME JUCE
+        GIT_TAG 8.0.12
+        GITHUB_REPOSITORY juce-framework/JUCE
+        SOURCE_DIR ${LIB_DIR}/juce
+)
+
+# 2. Download the RAW SFZeroModule cleanly via CPM
+cpmaddpackage(
+        NAME SFZeroModule
+        GIT_TAG master
+        GITHUB_REPOSITORY isfiol/SFZero
+        SOURCE_DIR ${LIB_DIR}/SFZero
+)
+
+# 3. Download GOOGLETEST
+cpmaddpackage(
+        NAME GOOGLETEST
+        GITHUB_REPOSITORY google/googletest
+        VERSION 1.17.0
+        SOURCE_DIR ${LIB_DIR}/googletest
+        OPTIONS
+        "INSTALL_GTEST OFF"
+        "gtest_force_shared_crt ON"
+)
+
+include(cmake/CompilerWarnings.cmake)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    set_directory_properties(PROPERTIES JUCE_VST3_COPY_DIR "$ENV{LOCALAPPDATA}/Programs/Common/VST3")
+endif()
+
+# Define your main audio plugin target
+juce_add_plugin(${PROJECT_NAME}
+        COMPANY_NAME "Company_Name"
+        IS_SYNTH TRUE
+        NEEDS_MIDI_INPUT TRUE
+        NEEDS_MIDI_OUTPUT FALSE
+        PLUGIN_MANUFACTURER_CODE Omsm
+        PLUGIN_CODE Miam
+        FORMATS AAX AU Standalone VST3
+        PRODUCT_NAME "Project_Name"
+        VERSION 1.0.0
+        COPY_PLUGIN_AFTER_BUILD FALSE
+)
+
+target_compile_definitions(${PROJECT_NAME}
+        PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0)
+
+juce_add_module(audio_plugin ALIAS_NAMESPACE my_company)
+
+target_compile_definitions(audio_plugin
+        INTERFACE
+        JUCE_PLUGIN_NAME="$<TARGET_PROPERTY:${PROJECT_NAME},JUCE_PLUGIN_NAME>"
+        JUCE_IS_MIDI_EFFECT=$<BOOL:$<TARGET_PROPERTY:${PROJECT_NAME},JUCE_IS_MIDI_EFFECT>>
+        JUCE_IS_SYNTH=$<BOOL:$<TARGET_PROPERTY:${PROJECT_NAME},JUCE_IS_SYNTH>>
+        JUCE_NEEDS_MIDI_INPUT=$<BOOL:$<TARGET_PROPERTY:${PROJECT_NAME},JUCE_NEEDS_MIDI_INPUT>>
+        JUCE_NEEDS_MIDI_OUTPUT=$<BOOL:$<TARGET_PROPERTY:${PROJECT_NAME},JUCE_NEEDS_MIDI_OUTPUT>>
+)
+
+# ---- FIXED: Disable strict override and overloaded-virtual errors for older module code ----
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "AppleClang")
+    target_compile_options(audio_plugin INTERFACE -Wno-inconsistent-missing-destructor-override -Wno-overloaded-virtual)
+    target_compile_options(${PROJECT_NAME} PRIVATE -Wno-inconsistent-missing-destructor-override -Wno-overloaded-virtual)
+elseif (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    target_compile_options(audio_plugin INTERFACE -Wno-suggest-override -Wno-overloaded-virtual)
+    target_compile_options(${PROJECT_NAME} PRIVATE -Wno-suggest-override -Wno-overloaded-virtual)
+endif()
+
+
+
+
+# ---- FIXED: Point JUCE exactly to the root of the clean CPM target folder ----
+juce_add_module(${LIB_DIR}/SFZero)
+
+# Package asset files
+juce_add_binary_data(BinaryData SOURCES
+        resource/images/background.png
+       
+)
+
+target_compile_options(audio_plugin
+        INTERFACE "${PROJECT_WARNINGS_CXX}")
+
+
+# Link your targets using standard JUCE module conventions
+target_link_libraries(${PROJECT_NAME}
+        PRIVATE
+        my_company::audio_plugin
+        BinaryData
+
+
+        PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+
+enable_testing()
+add_subdirectory(test)
